@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clinic Matcher</title>
+<meta name="description" content="Matches scraped Korean and English clinic records to one canonical Gangnam Beauty Guide clinic, and sends doubtful matches to a human.">
+<style>
+  :root { --bg:#fff; --fg:#1b1b1f; --muted:#5d5d66; --line:#e3e3e8; --auto:#0a7a3d; --review:#a15c00; --new:#3756c9; --code:#f4f4f6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141417; --fg:#ececf0; --muted:#a0a0aa; --line:#2c2c33; --auto:#4cc77f; --review:#f0a640; --new:#8ea2ff; --code:#1e1e23; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  p { color:var(--muted); margin:6px 0; }
+  textarea { width:100%; box-sizing:border-box; min-height:200px; font:13px/1.45 ui-monospace, monospace; background:var(--code); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:10px; }
+  button { margin:8px 0 16px; padding:8px 16px; font:inherit; border-radius:6px; border:1px solid var(--line); background:var(--fg); color:var(--bg); cursor:pointer; }
+  .wrap { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .AUTO { color:var(--auto); font-weight:600; } .REVIEW { color:var(--review); font-weight:600; } .NEW { color:var(--new); font-weight:600; }
+  code { background:var(--code); padding:1px 4px; border-radius:4px; }
+  #check { font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Clinic Matcher</h1>
+  <p>Review sources spell the same clinic many ways: Hangul or English, <code>PS</code> or <code>Plastic Surgery</code>, road name first or building number first. This page maps each scraped record to one canonical clinic and decides whether it is safe to merge.</p>
+  <p><b>AUTO</b> merges only when the building and the name (or the floor) agree. <b>REVIEW</b> goes to a person, because a wrong merge puts one clinic's reviews on another clinic's page. <b>NEW</b> is a clinic not in the directory yet.</p>
+  <p>One record per line: <code>name | address</code>. The canonical list is 16 clinics copied from gangnambeautyguide.com (name and address only). The sample records below are synthetic test inputs, not real reviews.</p>
+  <textarea id="input" spellcheck="false"></textarea>
+  <button id="run">Match records</button>
+  <p id="check"></p>
+  <div class="wrap"><table>
+    <thead><tr><th>Input record</th><th>Decision</th><th>Clinic</th><th>Why</th></tr></thead>
+    <tbody id="out"></tbody>
+  </table></div>
+</main>
+<script>
+// Canonical directory: name and address as listed on gangnambeautyguide.com.
+const CLINIC_ROWS = [
+  ["4ever-ps", "4Ever Plastic Surgery", "2F, 157, Dosan-daero, Gangnam-gu"],
+  ["da-ps", "DA Plastic Surgery", "3F, 125, Teheran-ro, Gangnam-gu"],
+  ["arc-ps", "ARC Plastic Surgery", "368, Sapyeong-daero, Seocho-gu"],
+  ["onepeak-ps", "Onepeak Plastic Surgery", "11F, 557, Gangnam-daero, Seocho-gu"],
+  ["noselab-clinic", "Noselab Clinic", "3F, 556, Gangnam-daero, Gangnam-gu"],
+  ["note-ps", "Note Plastic Surgery", "12F~15F, 563, Gangnam-daero, Seocho-gu"],
+  ["thank-you-ps", "Thank You Plastic Surgery", "5F, 446, Gangnam-daero, Gangnam-gu"],
+  ["grace-oandyoung-ps", "Grace O&Young Plastic Surgery", "4F, 623, Gangnam-daero, Seocho-gu"],
+  ["bio-ps", "Bio Plastic Surgery", "2F, 107, Dosan-daero, Gangnam-gu"],
+  ["lamiche-ps", "Lamiche Plastic Surgery", "2F, 14, Baekjegobun-ro 7-gil, Songpa-gu"],
+  ["honesty-ps", "Honesty Plastic Surgery", "7F, 596, Gangnam-daero, Gangnam-gu"],
+  ["kokoline-clinic", "Kokoline Clinic", "5F, 156, Apgujeong-ro, Gangnam-gu"],
+  [null, "Eye Antiaging Surgery", "16F, 406, Gangnam-daero, Gangnam-gu"],
+  ["muse-clinicgangnam", "Muse Clinic (Gangnam)", "2F, 452, Gangnam-daero, Gangnam-gu"],
+  ["shimmian-clinic", "Shimmian Clinic", "6F, 375, Gangnam-daero, Seocho-gu"],
+  ["bondi-ps", "Bondi Plastic Surgery", "8F, 429, Gangnam-daero, Seocho-gu"],
+];
+
+// Synthetic scraped records with the decision each one should get.
+const SAMPLES = [
+  ["Note Plastic Surgery | 563 Gangnam-daero, Seocho-gu, 12F", "AUTO"],
+  ["노트성형외과 | 서울특별시 서초구 강남대로 563 12층", "AUTO"],
+  ["Honesty PS | 596 Gangnamdaero 7th floor", "AUTO"],
+  ["Grace O&Young | 623, Gangnam-daero", "AUTO"],
+  ["Kokoline Clinic | 압구정로 156, 5층", "AUTO"],
+  ["DA Plastic Surgery | Teheran-ro 125 3F", "AUTO"],
+  ["Lamiche | 송파구 백제고분로7길 14", "AUTO"],
+  ["Bio Plastic Surgery | 강남구 도산대로 157 2층", "REVIEW"],
+  ["Muse Clinic |", "REVIEW"],
+  ["Seoul Star Dermatology | 12, Nonhyeon-ro, Gangnam-gu", "NEW"],
+];
+
+// Hangul road and district names, longest first so "백제고분로7길" wins over "백제고분로".
+const HANGUL = Object.entries({
+  "서울특별시": " ", "서울": " ", "강남구": " gangnam-gu ", "서초구": " seocho-gu ", "송파구": " songpa-gu ",
+  "강남대로": " gangnam-daero ", "도산대로": " dosan-daero ", "테헤란로": " teheran-ro ", "압구정로": " apgujeong-ro ",
+  "사평대로": " sapyeong-daero ", "논현로": " nonhyeon-ro ", "백제고분로7길": " baekjegobun-ro 7-gil ", "백제고분로": " baekjegobun-ro ",
+}).sort((a, b) => b[0].length - a[0].length);
+
+function parseAddress(raw) {
+  let s = (raw || "").toLowerCase();
+  for (const [ko, en] of HANGUL) s = s.split(ko).join(en);
+  // Floors: "12F", "12F~15F", "12층", "7th floor".
+  const floors = [];
+  s = s.replace(/(\d+)\s*(?:f|층|(?:st|nd|rd|th)?\s*floor)\b(?:\s*~\s*(\d+)\s*f)?|(\d+)\s*층/g, (m, a, b, c) => {
+    const lo = +(a || c), hi = b ? +b : lo;
+    for (let f = lo; f <= hi; f++) floors.push(f);
+    return " ";
+  });
+  // Road: "gangnam-daero", "gangnamdaero", "baekjegobun-ro 7-gil". Hyphens and spaces are dropped from the key.
+  const road = s.match(/([a-z]+)\s*-?\s*(daero|ro)\b(?:\s*(\d+)\s*-?\s*gil)?/);
+  if (!road) return { road: null, number: null, floors };
+  const roadKey = road[1] + road[2] + (road[3] ? road[3] + "gil" : "");
+  const rest = s.replace(road[0], " ").replace(/[a-z]+-gu/g, " ");
+  const num = rest.match(/\b(\d+)\b/);
+  return { road: roadKey, number: num ? num[1] : null, floors };
+}
+
+function nameKey(raw) {
+  return (raw || "").toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/\(.*?\)/g, " ")
+    .replace(/plastic surgery|\bps\b|clinic|hospital|surgery|성형외과|의원|병원/g, " ")
+    .replace(/[^a-z0-9가-힣]/g, "");
+}
+
+const CLINICS = CLINIC_ROWS.map(([slug, name, address]) => ({ slug, name, address, ...parseAddress(address), nameKey: nameKey(name) }));
+
+function match(line) {
+  const [name = "", address = ""] = line.split("|").map(s => s.trim());
+  const a = parseAddress(address), n = nameKey(name);
+  const latin = /[a-z]/.test(n);
+  const nameHit = c => n && latin && (c.nameKey === n || c.nameKey.startsWith(n) || n.startsWith(c.nameKey));
+  const byName = CLINICS.filter(nameHit);
+
+  if (a.road && a.number) {
+    const sameBuilding = CLINICS.filter(c => c.road === a.road && c.number === a.number);
+    if (sameBuilding.length) {
+      const named = sameBuilding.find(nameHit);
+      if (named) return ["AUTO", named, "Same building and same name."];
+      const onFloor = a.floors.length ? sameBuilding.filter(c => c.floors.some(f => a.floors.includes(f))) : [];
+      if (byName.length) return ["REVIEW", sameBuilding[0], `Address points to ${sameBuilding[0].name}, but the name says ${byName[0].name}.`];
+      if (onFloor.length === 1 && !latin) return ["AUTO", onFloor[0], "Same building and floor; the Hangul name was not compared."];
+      return ["REVIEW", sameBuilding[0], "Same building, but name and floor do not confirm it. A building can house several clinics."];
+    }
+    if (byName.length) return ["REVIEW", byName[0], "Name matches, but the address is a different building. Branch or moved clinic?"];
+    return ["NEW", null, "No clinic in the directory at this address or with this name."];
+  }
+  if (byName.length === 1) return ["REVIEW", byName[0], "Name only, no usable address. Names alone are not trusted for a merge."];
+  return ["NEW", null, "Not in the directory."];
+}
+
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+function render() {
+  const lines = document.getElementById("input").value.split("\n").filter(l => l.trim());
+  document.getElementById("out").innerHTML = lines.map(l => {
+    const [d, c, why] = match(l);
+    const clinic = c && c.slug ? `<a href="https://gangnambeautyguide.com/en/clinics/${c.slug}">${esc(c.name)}</a>` : c ? esc(c.name) : "-";
+    return `<tr><td>${esc(l)}</td><td class="${d}">${d}</td><td>${clinic}</td><td>${esc(why)}</td></tr>`;
+  }).join("");
+}
+
+// Self-check: every sample must get its expected decision.
+const passed = SAMPLES.filter(([l, want]) => match(l)[0] === want).length;
+document.getElementById("check").textContent = `Self-check: ${passed}/${SAMPLES.length} sample records get the expected decision.`;
+document.getElementById("input").value = SAMPLES.map(s => s[0]).join("\n");
+document.getElementById("run").onclick = render;
+render();
+</script>
+</body>
+</html>
