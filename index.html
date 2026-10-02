@@ -79,6 +79,13 @@
     <div id="out"></div>
   </section>
 
+  <section class="card">
+    <h2>Step 2: the same review, posted twice</h2>
+    <p>Naver Cafe posts get copied to blogs with an emoji or a "ㅎㅎ" added. Counting both inflates a clinic's rating. Reviews are compared on 3-character shingles, which works for Hangul without a tokenizer; pairs above 50% overlap collapse into one review.</p>
+    <div id="dupes"></div>
+    <p style="margin-top:10px">Limit: a translated copy shares no characters with its original, so the English line below stays separate. Catching it needs multilingual embeddings, which is the next step, not this one.</p>
+  </section>
+
   <footer>
     <span id="check"></span><br>
     Directory: 16 clinics copied from gangnambeautyguide.com (name and address only). Sample records are synthetic test inputs, not real reviews.
@@ -216,10 +223,60 @@ function render() {
   $("out").querySelectorAll("button[data-i]").forEach(b => b.onclick = () => { verdicts[lines[+b.dataset.i]] = b.dataset.v; render(); });
 }
 
-// Self-check: every sample must get its expected decision.
-const passed = SAMPLES.filter(([l, want]) => match(l)[0] === want).length;
-$("check").innerHTML = `Self-check: <span class="${passed === SAMPLES.length ? "ok" : "bad"}">${passed}/${SAMPLES.length}</span> sample records get the expected decision.`;
+// Synthetic reviews for one clinic, as they might arrive from different sources.
+const REVIEWS = [
+  ["Naver Cafe", "상담이 꼼꼼했고 코 라인이 자연스럽게 나왔어요. 붓기는 2주 정도 갔습니다."],
+  ["Naver Blog", "상담이 꼼꼼했고 코 라인이 자연스럽게 나왔어요!! 붓기는 2주 정도 갔습니다 ㅎㅎ"],
+  ["Daum Cafe", "가격 설명이 명확해서 좋았어요. 재수술 상담도 친절했습니다."],
+  ["Naver Blog", "가격 설명이 명확해서 좋았어요~ 재수술 상담도 정말 친절했습니다 :)"],
+  ["Daum Cafe", "대기 시간이 길었지만 원장님이 직접 설명해 주셨어요."],
+  ["Translated", "Consultation was thorough and the nose line came out natural. Swelling lasted about two weeks."],
+];
+// Expected groups by review index, used by the self-check.
+const EXPECTED_GROUPS = "0,1|2,3|4|5";
+
+function shingles(text) {
+  const s = text.toLowerCase().replace(/ㅎ+|ㅋ+/g, "").replace(/[^a-z0-9가-힣]/g, "");
+  const set = new Set();
+  for (let i = 0; i + 3 <= s.length; i++) set.add(s.slice(i, i + 3));
+  return set;
+}
+const jaccard = (a, b) => { let n = 0; for (const x of a) if (b.has(x)) n++; return n / (a.size + b.size - n || 1); };
+
+function groupReviews(reviews, threshold = 0.5) {
+  const sh = reviews.map(r => shingles(r[1])), parent = reviews.map((_, i) => i);
+  const find = i => parent[i] === i ? i : (parent[i] = find(parent[i]));
+  const scores = {};
+  for (let i = 0; i < reviews.length; i++) for (let j = i + 1; j < reviews.length; j++) {
+    const s = jaccard(sh[i], sh[j]);
+    if (s >= threshold) { parent[find(j)] = find(i); scores[i + "," + j] = s; }
+  }
+  const groups = {};
+  reviews.forEach((_, i) => (groups[find(i)] ??= []).push(i));
+  return { groups: Object.values(groups), scores };
+}
+
+function renderDupes() {
+  const { groups, scores } = groupReviews(REVIEWS);
+  $("dupes").innerHTML = `<div class="stats" style="margin-top:0">
+      <div class="stat"><b>${REVIEWS.length}</b><span>reviews scraped</span></div>
+      <div class="stat"><b>${groups.length}</b><span>unique reviews counted</span></div></div>` +
+    groups.map(g => {
+      const pair = g.length > 1 ? Object.entries(scores).find(([k]) => k.split(",").every(x => g.includes(+x))) : null;
+      const tag = g.length > 1 ? `<span class="badge REVIEW">${g.length} copies · ${Math.round(pair[1] * 100)}% overlap · counted once</span>` : `<span class="badge AUTO">unique</span>`;
+      return `<div class="row" style="grid-template-columns:1fr"><div>${tag}${g.map(i =>
+        `<div class="raw" style="margin-top:6px"><span class="chip">${esc(REVIEWS[i][0])}</span> ${esc(REVIEWS[i][1])}</div>`).join("")}</div></div>`;
+    }).join("");
+}
+
+// Self-check: every sample must get its expected decision, and duplicates must group as expected.
+const dupesOk = groupReviews(REVIEWS).groups.map(g => g.join(",")).join("|") === EXPECTED_GROUPS;
+const passed = SAMPLES.filter(([l, want]) => match(l)[0] === want).length + (dupesOk ? 1 : 0);
+SAMPLES.push(["duplicate grouping", "ok"]);
+$("check").innerHTML = `Self-check: <span class="${passed === SAMPLES.length ? "ok" : "bad"}">${passed}/${SAMPLES.length}</span> checks pass (10 match decisions, 1 duplicate grouping).`;
+SAMPLES.pop();
 const loadSamples = () => { $("input").value = SAMPLES.map(s => s[0]).join("\n"); for (const k in verdicts) delete verdicts[k]; render(); };
+renderDupes();
 $("input").oninput = render;
 $("reset").onclick = loadSamples;
 loadSamples();
