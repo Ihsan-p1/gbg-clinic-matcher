@@ -5,36 +5,84 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clinic Matcher</title>
 <meta name="description" content="Matches scraped Korean and English clinic records to one canonical Gangnam Beauty Guide clinic, and sends doubtful matches to a human.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#fff; --fg:#1b1b1f; --muted:#5d5d66; --line:#e3e3e8; --auto:#0a7a3d; --review:#a15c00; --new:#3756c9; --code:#f4f4f6; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#141417; --fg:#ececf0; --muted:#a0a0aa; --line:#2c2c33; --auto:#4cc77f; --review:#f0a640; --new:#8ea2ff; --code:#1e1e23; } }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
-  main { max-width:960px; margin:0 auto; padding:24px 16px 48px; }
-  h1 { font-size:1.5rem; margin:0 0 4px; }
-  p { color:var(--muted); margin:6px 0; }
-  textarea { width:100%; box-sizing:border-box; min-height:200px; font:13px/1.45 ui-monospace, monospace; background:var(--code); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:10px; }
-  button { margin:8px 0 16px; padding:8px 16px; font:inherit; border-radius:6px; border:1px solid var(--line); background:var(--fg); color:var(--bg); cursor:pointer; }
-  .wrap { overflow-x:auto; }
-  table { border-collapse:collapse; width:100%; font-size:14px; }
-  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
-  .AUTO { color:var(--auto); font-weight:600; } .REVIEW { color:var(--review); font-weight:600; } .NEW { color:var(--new); font-weight:600; }
-  code { background:var(--code); padding:1px 4px; border-radius:4px; }
-  #check { font-weight:600; }
+  /* Palette taken from gangnambeautyguide.com: ink, accent, teal, border. */
+  :root { --ink:#1A1A2E; --accent:#C9356E; --teal:#0EA5A0; --border:#E5E7EB; --surface:#FFFFFF; --bg:#F7F7FA; --muted:#5B5B70; --amber:#B45309; --amber-bg:#FEF3C7; --teal-bg:#E6F7F6; --blue:#3651C9; --blue-bg:#EAEEFD; --code:#F1F1F5; }
+  @media (prefers-color-scheme: dark) { :root { --ink:#ECECF3; --surface:#1B1B2B; --bg:#121220; --border:#2E2E42; --muted:#A3A3B8; --amber:#F5B454; --amber-bg:#3A2A10; --teal-bg:#0F2E2D; --blue:#9BAEFF; --blue-bg:#1C2347; --code:#24243A; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 Manrope, system-ui, sans-serif; }
+  main { max-width:1040px; margin:0 auto; padding:28px 16px 56px; }
+  .eyebrow { color:var(--accent); font-weight:700; font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
+  h1 { font-size:1.9rem; line-height:1.2; margin:6px 0 8px; font-weight:800; }
+  h2 { font-size:1.05rem; margin:0 0 10px; }
+  p { margin:6px 0; color:var(--muted); }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px; margin-top:16px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:760px) { .grid { grid-template-columns:1fr; } }
+  ol { margin:0; padding-left:20px; color:var(--muted); } ol li { margin:4px 0; }
+  textarea { width:100%; min-height:230px; font:13px/1.5 ui-monospace, Consolas, monospace; background:var(--code); color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:10px; resize:vertical; }
+  .stats { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+  .stat { flex:1 1 150px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+  .stat b { display:block; font-size:1.6rem; font-weight:800; }
+  .stat span { color:var(--muted); font-size:13px; }
+  .badge { display:inline-block; font-size:12px; font-weight:800; padding:2px 8px; border-radius:999px; letter-spacing:.03em; white-space:nowrap; }
+  .AUTO { color:var(--teal); background:var(--teal-bg); } .REVIEW { color:var(--amber); background:var(--amber-bg); } .NEW { color:var(--blue); background:var(--blue-bg); }
+  .MERGED { color:var(--teal); background:var(--teal-bg); } .SEPARATE { color:var(--blue); background:var(--blue-bg); }
+  .row { display:grid; grid-template-columns:1.3fr 1fr 1.4fr; gap:14px; padding:14px 0; border-top:1px solid var(--border); align-items:start; }
+  .row:first-child { border-top:0; }
+  @media (max-width:760px) { .row { grid-template-columns:1fr; gap:6px; } }
+  .raw { font:13px/1.45 ui-monospace, Consolas, monospace; word-break:break-word; }
+  .chips { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
+  .chip { font-size:11.5px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:1px 6px; }
+  .why { color:var(--muted); font-size:14px; }
+  a { color:var(--accent); font-weight:600; text-decoration:none; } a:hover { text-decoration:underline; }
+  .actions { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+  button { font:600 13px Manrope, system-ui, sans-serif; border-radius:8px; padding:6px 12px; cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--ink); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .ok { color:var(--teal); font-weight:700; } .bad { color:var(--accent); font-weight:700; }
+  footer { margin-top:20px; font-size:13px; color:var(--muted); }
 </style>
 </head>
 <body>
 <main>
-  <h1>Clinic Matcher</h1>
-  <p>Review sources spell the same clinic many ways: Hangul or English, <code>PS</code> or <code>Plastic Surgery</code>, road name first or building number first. This page maps each scraped record to one canonical clinic and decides whether it is safe to merge.</p>
-  <p><b>AUTO</b> merges only when the building and the name (or the floor) agree. <b>REVIEW</b> goes to a person, because a wrong merge puts one clinic's reviews on another clinic's page. <b>NEW</b> is a clinic not in the directory yet.</p>
-  <p>One record per line: <code>name | address</code>. The canonical list is 16 clinics copied from gangnambeautyguide.com (name and address only). The sample records below are synthetic test inputs, not real reviews.</p>
-  <textarea id="input" spellcheck="false"></textarea>
-  <button id="run">Match records</button>
-  <p id="check"></p>
-  <div class="wrap"><table>
-    <thead><tr><th>Input record</th><th>Decision</th><th>Clinic</th><th>Why</th></tr></thead>
-    <tbody id="out"></tbody>
-  </table></div>
+  <div class="eyebrow">Gangnam Beauty Guide · review syndication</div>
+  <h1>Which clinic is this review about?</h1>
+  <p>Korean review sources spell the same clinic many ways: Hangul or English, <code>PS</code> or <code>Plastic Surgery</code>, road first or building number first. Merging the wrong pair puts one clinic's reviews on another clinic's page, and trust is the product. This page decides, record by record, whether a merge is safe.</p>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Scraped records</h2>
+      <p>One per line: <code>name | address</code>. Results update as you type.</p>
+      <textarea id="input" spellcheck="false" aria-label="Scraped records, one per line"></textarea>
+      <div class="actions"><button id="reset">Reset samples</button></div>
+    </section>
+    <section class="card">
+      <h2>How it decides</h2>
+      <ol>
+        <li>Normalise the address: Hangul road and district names to romanised form, then a key of road + building number. Floors are read separately (<code>12F</code>, <code>12층</code>, <code>7th floor</code>, <code>12F~15F</code>).</li>
+        <li>Normalise the name: drop <code>Plastic Surgery</code>, <code>PS</code>, <code>성형외과</code>, <code>의원</code>, punctuation.</li>
+        <li><span class="badge AUTO">AUTO</span> only when the building matches and the name or the floor confirms it.</li>
+        <li><span class="badge REVIEW">REVIEW</span> when signals disagree or only the name matches. A building can house several clinics, and a name can belong to a branch.</li>
+        <li><span class="badge NEW">NEW</span> when neither the building nor the name is in the directory.</li>
+      </ol>
+      <p style="margin-top:10px">Rules, not an LLM: every decision can be explained and audited. A model is worth adding later for the REVIEW pile only.</p>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Results</h2>
+    <div id="out"></div>
+  </section>
+
+  <footer>
+    <span id="check"></span><br>
+    Directory: 16 clinics copied from gangnambeautyguide.com (name and address only). Sample records are synthetic test inputs, not real reviews.
+  </footer>
 </main>
 <script>
 // Canonical directory: name and address as listed on gangnambeautyguide.com.
@@ -131,22 +179,50 @@ function match(line) {
   return ["NEW", null, "Not in the directory."];
 }
 
-const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const $ = id => document.getElementById(id);
+// Reviewer verdicts on REVIEW rows, keyed by the raw line. In memory only: a real queue would persist them.
+const verdicts = {};
+
+function chips(line) {
+  const a = parseAddress(line.split("|")[1] || ""), n = nameKey(line.split("|")[0]);
+  const out = [];
+  if (n) out.push(`name: ${n}`);
+  if (a.road) out.push(`road: ${a.road}`);
+  if (a.number) out.push(`no. ${a.number}`);
+  if (a.floors.length) out.push(`floor ${a.floors.length > 1 ? a.floors[0] + "-" + a.floors.at(-1) : a.floors[0]}`);
+  return out.map(c => `<span class="chip">${esc(c)}</span>`).join("");
+}
+
 function render() {
-  const lines = document.getElementById("input").value.split("\n").filter(l => l.trim());
-  document.getElementById("out").innerHTML = lines.map(l => {
+  const lines = $("input").value.split("\n").filter(l => l.trim());
+  const counts = { AUTO: 0, REVIEW: 0, NEW: 0 };
+  $("out").innerHTML = lines.map((l, i) => {
     const [d, c, why] = match(l);
-    const clinic = c && c.slug ? `<a href="https://gangnambeautyguide.com/en/clinics/${c.slug}">${esc(c.name)}</a>` : c ? esc(c.name) : "-";
-    return `<tr><td>${esc(l)}</td><td class="${d}">${d}</td><td>${clinic}</td><td>${esc(why)}</td></tr>`;
-  }).join("");
+    counts[d]++;
+    const clinic = c && c.slug ? `<a href="https://gangnambeautyguide.com/en/clinics/${c.slug}/" target="_blank" rel="noopener">${esc(c.name)}</a>` : c ? esc(c.name) : "<span class='why'>none</span>";
+    const v = verdicts[l];
+    const badge = v ? `<span class="badge ${v}">${v === "MERGED" ? "MERGED BY REVIEWER" : "KEPT SEPARATE"}</span>` : `<span class="badge ${d}">${d}</span>`;
+    const actions = d === "REVIEW" && !v && c
+      ? `<div class="actions"><button class="primary" data-i="${i}" data-v="MERGED">Merge into ${esc(c.name)}</button><button data-i="${i}" data-v="SEPARATE">Keep separate</button></div>` : "";
+    return `<div class="row"><div><div class="raw">${esc(l)}</div><div class="chips">${chips(l)}</div></div>
+      <div>${badge}<div style="margin-top:6px">${clinic}</div></div>
+      <div class="why">${esc(why)}${actions}</div></div>`;
+  }).join("") || "<p>No records.</p>";
+  const pending = lines.filter(l => match(l)[0] === "REVIEW" && !verdicts[l]).length;
+  $("stats").innerHTML = [
+    [counts.AUTO, "merged automatically"], [pending, "waiting for a reviewer"], [counts.NEW, "new clinics"], [lines.length, "records in"],
+  ].map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join("");
+  $("out").querySelectorAll("button[data-i]").forEach(b => b.onclick = () => { verdicts[lines[+b.dataset.i]] = b.dataset.v; render(); });
 }
 
 // Self-check: every sample must get its expected decision.
 const passed = SAMPLES.filter(([l, want]) => match(l)[0] === want).length;
-document.getElementById("check").textContent = `Self-check: ${passed}/${SAMPLES.length} sample records get the expected decision.`;
-document.getElementById("input").value = SAMPLES.map(s => s[0]).join("\n");
-document.getElementById("run").onclick = render;
-render();
+$("check").innerHTML = `Self-check: <span class="${passed === SAMPLES.length ? "ok" : "bad"}">${passed}/${SAMPLES.length}</span> sample records get the expected decision.`;
+const loadSamples = () => { $("input").value = SAMPLES.map(s => s[0]).join("\n"); for (const k in verdicts) delete verdicts[k]; render(); };
+$("input").oninput = render;
+$("reset").onclick = loadSamples;
+loadSamples();
 </script>
 </body>
 </html>
